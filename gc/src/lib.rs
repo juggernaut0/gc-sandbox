@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
 use std::cell::{RefCell, RefMut};
 
@@ -30,6 +30,41 @@ impl<T> Deref for GcPtr<T> {
         unsafe { &*self.ptr }
     }
 }
+
+impl<T> DerefMut for GcPtr<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.ptr as *mut T) }
+    }
+}
+
+// === GcBor ===
+
+pub struct GcCell<T> {
+    ptr: RefCell<*const T>,
+}
+
+impl<T> GcCell<T> {
+    pub unsafe fn from_bor(bor: GcBor<T>) -> GcCell<T> {
+        GcCell { ptr: RefCell::new(bor.ptr) }
+    }
+}
+
+impl<T> Deref for GcCell<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
+        unsafe { &**self.ptr.borrow() }
+    }
+}
+
+impl<T> DerefMut for GcCell<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(*self.ptr.borrow_mut() as *mut T) }
+    }
+}
+
+// === GcBor ===
 
 pub struct GcBor<'ctx, 'gc, T> {
     ptr: *const T,
@@ -181,8 +216,25 @@ pub unsafe trait Trace {
 
 unsafe impl<T: Trace + 'static> Trace for GcPtr<T> {
     fn trace(&self, tracer: &mut Tracer) {
-        tracer.mark(self.ptr);
-        self.deref().trace(tracer);
+        if tracer.mark(self.ptr) {
+            self.deref().trace(tracer);
+        }
+    }
+}
+
+unsafe impl<T: Trace + 'static> Trace for GcCell<T> {
+    fn trace(&self, tracer: &mut Tracer) {
+        if tracer.mark(*self.ptr.borrow()) {
+            self.deref().trace(tracer);
+        }
+    }
+}
+
+unsafe impl<T: Trace + 'static> Trace for Option<T> {
+    fn trace(&self, tracer: &mut Tracer) {
+        if let Some(t) = self {
+            t.trace(tracer);
+        }
     }
 }
 
@@ -204,10 +256,9 @@ pub struct Tracer<'a> {
 }
 
 impl Tracer<'_> {
-    fn mark<T: Trace + 'static>(&mut self, ptr: *const T) {
+    // returns true if ptr has not been seen and tracing should continue
+    fn mark<T: Trace + 'static>(&mut self, ptr: *const T) -> bool {
         let ptr: *mut dyn Trace = ptr as *mut T;
-        if self.objs.contains_key(&ptr) {
-            self.objs.insert(ptr, true);
-        }
+        !self.objs.insert(ptr, true).unwrap()
     }
 }

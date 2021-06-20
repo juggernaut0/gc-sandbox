@@ -1,53 +1,56 @@
 use gc::*;
 use std::mem::size_of;
+use std::cell::{Cell, RefCell};
 
-#[derive(GcNew, Debug)]
-struct A {
-    b: GcPtr<B>,
+// TODO Option<GcPtr<T>>
+// TODO making GcBor mutable
+
+#[derive(GcNew, Trace)]
+struct SelfRef {
+    x: i32,
+    other: GcPtr<Foo>,
 }
 
-unsafe impl Trace for A {
-    fn trace(&self, tracer: &mut Tracer) {
-        self.b.trace(tracer);
-    }
+#[derive(Trace)]
+struct Foo {
+    foo: Option<GcPtr<SelfRef>>,
 }
 
-#[derive(Debug)]
-struct B {
-    i: i32
-}
-
-unsafe impl Trace for B {
-    fn trace(&self, tracer: &mut Tracer) {
-        self.i.trace(tracer);
+impl Foo {
+    fn gc_new<'ctx, 'gc>(__gc_ctx: &'ctx gc::GcContext<'gc>, other: Option<GcBor<'ctx, 'gc, SelfRef>>) -> GcBor<'ctx, 'gc, Self> {
+        __gc_ctx.allocate(Self { foo: other.map(|other| unsafe { GcPtr::from_bor(other) }) })
     }
 }
 
 fn main() {
-    dbg!(size_of::<A>());
-    dbg!(size_of::<B>());
-    dbg!(size_of::<GcPtr<A>>());
-    dbg!(size_of::<GcBor<A>>());
-    dbg!(size_of::<GcRoot<A>>());
+    dbg!(size_of::<SelfRef>());
+    dbg!(size_of::<GcPtr<SelfRef>>());
+    dbg!(size_of::<GcCell<SelfRef>>());
+    dbg!(size_of::<GcBor<SelfRef>>());
+    dbg!(size_of::<GcRoot<SelfRef>>());
 
     let gc = Gc::new();
     gc.stats();
 
     let ctx: GcContext = gc.context();
-    let b: GcBor<B> = ctx.allocate(B { i: 42 });
-    let b2: GcBor<B> = ctx.allocate(B { i: 69 });
-    let a: GcBor<A> = A::gc_new(&ctx, b);
-    let a_root: GcRoot<A> = gc.root(a);
-    dbg!(b);
-    dbg!(b2);
+    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, Foo::gc_new(&ctx, None));
+    let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Foo::gc_new(&ctx, Some(a)));
+    *a.other = *Foo::gc_new(&ctx, Some(b));
+    let a_root = gc.root(a);
 
     gc.stats();
+    eprintln!("ctx.collect()");
     ctx.collect();
     gc.stats();
 
-    // compile error
-    // dbg!(b2);
-
     let new_ctx = gc.context();
-    dbg!(a_root.borrow(&new_ctx));
+    let a = a_root.borrow(&new_ctx);
+    dbg!(a.x);
+    //dbg!(a.other.borrow().unwrap().x);
+
+    drop(a_root);
+
+    eprintln!("new_ctx.collect()");
+    new_ctx.collect();
+    gc.stats();
 }
