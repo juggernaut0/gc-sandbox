@@ -5,6 +5,9 @@ use std::cell::{RefCell, RefMut};
 pub use gc_derive::*;
 use std::fmt::{Debug, Formatter};
 use std::collections::{HashMap, HashSet};
+use crate::unsafe_into::UnsafeInto;
+
+pub mod unsafe_into;
 
 pub struct GcPtr<T> {
     ptr: *const T,
@@ -37,7 +40,19 @@ impl<T> DerefMut for GcPtr<T> {
     }
 }
 
-// === GcBor ===
+impl<T> UnsafeInto<GcPtr<T>> for GcBor<'_, '_, T> {
+    unsafe fn unsafe_into(self) -> GcPtr<T> {
+        GcPtr::from_bor(self)
+    }
+}
+
+impl<T> UnsafeInto<Option<GcPtr<T>>> for Option<GcBor<'_, '_, T>> {
+    unsafe fn unsafe_into(self) -> Option<GcPtr<T>> {
+        self.map(|it| it.unsafe_into())
+    }
+}
+
+// === GcCell ===
 
 pub struct GcCell<T> {
     ptr: RefCell<*const T>,
@@ -61,6 +76,18 @@ impl<T> Deref for GcCell<T> {
 impl<T> DerefMut for GcCell<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *(*self.ptr.borrow_mut() as *mut T) }
+    }
+}
+
+impl<T> UnsafeInto<GcCell<T>> for GcBor<'_, '_, T> {
+    unsafe fn unsafe_into(self) -> GcCell<T> {
+        GcCell::from_bor(self)
+    }
+}
+
+impl<T> UnsafeInto<Option<GcCell<T>>> for Option<GcBor<'_, '_, T>> {
+    unsafe fn unsafe_into(self) -> Option<GcCell<T>> {
+        self.map(|it| it.unsafe_into())
     }
 }
 
@@ -100,6 +127,8 @@ impl<'ctx, 'gc, T> Clone for GcBor<'ctx, 'gc, T> {
 }
 
 impl<'ctx, 'gc, T> Copy for GcBor<'ctx, 'gc, T> {}
+
+// === GcRoot ===
 
 pub struct GcRoot<'gc, T: Trace + 'static> {
     ptr: *const T,

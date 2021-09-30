@@ -2,24 +2,10 @@ use gc::*;
 use std::mem::size_of;
 use std::cell::{Cell, RefCell};
 
-// TODO Option<GcPtr<T>>
-// TODO making GcBor mutable
-
 #[derive(GcNew, Trace)]
 struct SelfRef {
     x: i32,
-    other: GcPtr<Foo>,
-}
-
-#[derive(Trace)]
-struct Foo {
-    foo: Option<GcPtr<SelfRef>>,
-}
-
-impl Foo {
-    fn gc_new<'ctx, 'gc>(__gc_ctx: &'ctx gc::GcContext<'gc>, other: Option<GcBor<'ctx, 'gc, SelfRef>>) -> GcBor<'ctx, 'gc, Self> {
-        __gc_ctx.allocate(Self { foo: other.map(|other| unsafe { GcPtr::from_bor(other) }) })
-    }
+    other: Option<GcPtr<SelfRef>>,
 }
 
 fn main() {
@@ -33,9 +19,12 @@ fn main() {
     gc.stats();
 
     let ctx: GcContext = gc.context();
-    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, Foo::gc_new(&ctx, None));
-    let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Foo::gc_new(&ctx, Some(a)));
-    *a.other = *Foo::gc_new(&ctx, Some(b));
+
+    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, None);
+    let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Some(a));
+
+    // TODO allow setting a.foo to Some(b)
+
     let a_root = gc.root(a);
 
     gc.stats();

@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{Data, DeriveInput, Fields, GenericArgument, parse_macro_input, PathArguments, Type, TypePath, Generics, GenericParam, parse_quote, Index};
+use syn::{Data, DeriveInput, Fields, GenericArgument, parse_macro_input, PathArguments, Type, TypePath, Generics, GenericParam, parse_quote, Index, AngleBracketedGenericArguments, PathSegment};
 use syn::spanned::Spanned;
 
 #[proc_macro_derive(GcNew)]
@@ -35,23 +35,10 @@ fn gc_new_fn(data: &Data) -> TokenStream {
                         let name = &f.ident;
                         let ty = &f.ty;
                         match ty {
-                            Type::Path(ref path) if type_is_gc_ptr(path) => {
-                                let inner = match path.path.segments.last().unwrap().arguments {
-                                    PathArguments::AngleBracketed(ref params) => {
-                                        params.args.iter()
-                                            .filter_map(|ga| {
-                                                match ga {
-                                                    GenericArgument::Type(ref inner) => Some(inner),
-                                                    _ => None
-                                                }
-                                            })
-                                            .next()
-                                            .unwrap()
-                                    }
-                                    _ => unimplemented!()
-                                };
+                            Type::Path(ref path) => {
+                                let new_type = convert_gc_ptr_to_gc_bor(path);
                                 quote_spanned! {f.span()=>
-                                    #name: gc::GcBor<'ctx, 'gc, #inner>
+                                    #name: #new_type
                                 }
                             }
                             _ => {
@@ -64,24 +51,15 @@ fn gc_new_fn(data: &Data) -> TokenStream {
 
                     let assigns = fields.named.iter().map(|f| {
                         let name = &f.ident;
-                        let ty = &f.ty;
-                        match ty {
-                            Type::Path(ref path) if type_is_gc_ptr(path) => {
-                                quote_spanned! {f.span()=>
-                                    #name: unsafe { GcPtr::from_bor(#name) }
-                                }
-                            }
-                            _ => {
-                                quote_spanned! {f.span()=>
-                                    #name
-                                }
-                            }
+                        quote_spanned! {f.span()=>
+                            #name: #name.unsafe_into()
                         }
                     });
 
                     quote! {
                         fn gc_new<'ctx, 'gc>(__gc_ctx: &'ctx gc::GcContext<'gc> #(, #params)*) -> gc::GcBor<'ctx, 'gc, Self> {
-                            __gc_ctx.allocate(Self { #(#assigns ,)* })
+                            use gc::unsafe_into::UnsafeInto;
+                            __gc_ctx.allocate(unsafe { Self { #(#assigns ,)* } })
                         }
                     }
                 }
@@ -89,6 +67,65 @@ fn gc_new_fn(data: &Data) -> TokenStream {
             }
         }
         _ => unimplemented!()
+    }
+}
+
+fn convert_gc_ptr_to_gc_bor(path: &TypePath) -> TypePath {
+    if type_is_gc_ptr(path) {
+        let inner = match path.path.segments.last().unwrap().arguments {
+            PathArguments::AngleBracketed(ref params) => {
+                params.args.iter()
+                    .filter_map(|ga| {
+                        match ga {
+                            GenericArgument::Type(ref inner) => Some(inner),
+                            _ => None
+                        }
+                    })
+                    .next()
+                    .unwrap()
+            }
+            _ => unimplemented!()
+        };
+
+        let tokens = quote! {
+            gc::GcBor<'ctx, 'gc, #inner>
+        };
+
+        syn::parse2(tokens).unwrap()
+    } else {
+        let last_seg = path.path.segments.last().unwrap();
+        let arguments = match &last_seg.arguments {
+            PathArguments::AngleBracketed(params) => {
+                let new_args = params.args.iter()
+                    .map(|ga| {
+                        match ga {
+                            GenericArgument::Type(Type::Path(ref inner)) => {
+                                GenericArgument::Type(Type::Path(convert_gc_ptr_to_gc_bor(inner)))
+                            },
+                            _ => ga.clone()
+                        }
+                    });
+
+                let tokens = quote! {
+                    < #(#new_args ,)* >
+                };
+                let abga: AngleBracketedGenericArguments = syn::parse2(tokens).unwrap();
+
+                PathArguments::AngleBracketed(abga)
+            }
+            it => it.clone()
+        };
+
+        let new_seg = PathSegment {
+            ident: last_seg.ident.clone(),
+            arguments,
+        };
+
+        let mut new_path = path.clone();
+        let last_seg = new_path.path.segments.last_mut().unwrap();
+        *last_seg = new_seg;
+
+        new_path
     }
 }
 
