@@ -19,7 +19,7 @@ pub struct GcPtr<T> {
 impl<T> GcPtr<T> {
     /// # Safety
     ///
-    /// Returned GcPtr must be immediately moved into another Gc managed object in the same GcContext as Bor
+    /// Returned GcPtr must be immediately moved into another Gc managed object in the same GcContext as bor
     pub unsafe fn from_bor(bor: GcBor<T>) -> GcPtr<T> {
         GcPtr { ptr: bor.ptr }
     }
@@ -40,12 +40,6 @@ impl<T> Deref for GcPtr<T> {
     }
 }
 
-/*impl<T> DerefMut for GcPtr<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.ptr as *mut T) }
-    }
-}*/
-
 impl<T> UnsafeInto<GcPtr<T>> for GcBor<'_, '_, T> {
     unsafe fn unsafe_into(self) -> GcPtr<T> {
         GcPtr::from_bor(self)
@@ -57,45 +51,6 @@ impl<T> UnsafeInto<Option<GcPtr<T>>> for Option<GcBor<'_, '_, T>> {
         self.map(|it| it.unsafe_into())
     }
 }
-
-// === GcCell ===
-
-/*pub struct GcCell<T> {
-    ptr: RefCell<*const T>,
-}
-
-impl<T> GcCell<T> {
-    pub unsafe fn from_bor(bor: GcBor<T>) -> GcCell<T> {
-        GcCell { ptr: RefCell::new(bor.ptr) }
-    }
-}
-
-impl<T> Deref for GcCell<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
-        unsafe { &**self.ptr.borrow() }
-    }
-}
-
-impl<T> DerefMut for GcCell<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(*self.ptr.borrow_mut() as *mut T) }
-    }
-}
-
-impl<T> UnsafeInto<GcCell<T>> for GcBor<'_, '_, T> {
-    unsafe fn unsafe_into(self) -> GcCell<T> {
-        GcCell::from_bor(self)
-    }
-}
-
-impl<T> UnsafeInto<Option<GcCell<T>>> for Option<GcBor<'_, '_, T>> {
-    unsafe fn unsafe_into(self) -> Option<GcCell<T>> {
-        self.map(|it| it.unsafe_into())
-    }
-}*/
 
 // === GcBor ===
 
@@ -261,14 +216,6 @@ unsafe impl<T: Trace + 'static> Trace for GcPtr<T> {
         }
     }
 }
-
-/*unsafe impl<T: Trace + 'static> Trace for GcCell<T> {
-    fn trace(&self, tracer: &mut Tracer) {
-        if tracer.mark(*self.ptr.borrow()) {
-            self.deref().trace(tracer);
-        }
-    }
-}*/
 
 unsafe impl<T: Trace + 'static> Trace for Option<T> {
     fn trace(&self, tracer: &mut Tracer) {

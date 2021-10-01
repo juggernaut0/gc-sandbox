@@ -1,6 +1,5 @@
 use gc::*;
 use std::mem::size_of;
-use gc::unsafe_into::UnsafeInto;
 
 #[derive(GcNew, Trace)]
 struct SelfRef {
@@ -10,13 +9,13 @@ struct SelfRef {
 
 // TODO implement as proc macro
 impl SelfRef {
-    fn set_x(this: GcBor<Self>, x: i32) {
+    fn set_x(this: GcBor<Self>, x: impl gc::unsafe_into::UnsafeInto<i32>) {
         unsafe {
             (*this.as_ptr()).x = x.unsafe_into();
         }
     }
 
-    fn set_other(this: GcBor<Self>, other: Option<GcBor<SelfRef>>) {
+    fn set_other(this: GcBor<Self>, other: impl gc::unsafe_into::UnsafeInto<Option<GcPtr<SelfRef>>>) {
         unsafe {
             (*this.as_ptr()).other = other.unsafe_into();
         }
@@ -36,7 +35,8 @@ fn main() {
 
     let ctx: GcContext = gc.context();
 
-    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, None);
+    let opt: Option<GcBor<SelfRef>> = None;
+    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, opt);
     let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Some(a));
 
     SelfRef::set_x(a, 5);
