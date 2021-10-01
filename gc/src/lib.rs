@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::marker::PhantomData;
 use std::cell::{RefCell, RefMut};
 
@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use crate::unsafe_into::UnsafeInto;
 
 pub mod unsafe_into;
+
+// === GcPtr ===
 
 pub struct GcPtr<T> {
     ptr: *const T,
@@ -34,11 +36,11 @@ impl<T> Deref for GcPtr<T> {
     }
 }
 
-impl<T> DerefMut for GcPtr<T> {
+/*impl<T> DerefMut for GcPtr<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *(self.ptr as *mut T) }
     }
-}
+}*/
 
 impl<T> UnsafeInto<GcPtr<T>> for GcBor<'_, '_, T> {
     unsafe fn unsafe_into(self) -> GcPtr<T> {
@@ -54,7 +56,7 @@ impl<T> UnsafeInto<Option<GcPtr<T>>> for Option<GcBor<'_, '_, T>> {
 
 // === GcCell ===
 
-pub struct GcCell<T> {
+/*pub struct GcCell<T> {
     ptr: RefCell<*const T>,
 }
 
@@ -89,7 +91,7 @@ impl<T> UnsafeInto<Option<GcCell<T>>> for Option<GcBor<'_, '_, T>> {
     unsafe fn unsafe_into(self) -> Option<GcCell<T>> {
         self.map(|it| it.unsafe_into())
     }
-}
+}*/
 
 // === GcBor ===
 
@@ -102,6 +104,10 @@ pub struct GcBor<'ctx, 'gc, T> {
 impl<'ctx, 'gc, T> GcBor<'ctx, 'gc, T> {
     fn new(ptr: *const T, _ctx: &'ctx GcContext<'gc>) -> GcBor<'ctx, 'gc, T> {
         GcBor { ptr, phantom: PhantomData::default() }
+    }
+
+    pub unsafe fn as_mut(self) -> *mut T {
+        self.ptr as *mut T
     }
 }
 
@@ -147,6 +153,8 @@ impl<T: Trace + 'static> Drop for GcRoot<'_, T> {
         self.gc.unroot(self.ptr)
     }
 }
+
+// === Gc & GcContext ===
 
 pub struct Gc {
     context_ref: RefCell<()>,
@@ -251,13 +259,13 @@ unsafe impl<T: Trace + 'static> Trace for GcPtr<T> {
     }
 }
 
-unsafe impl<T: Trace + 'static> Trace for GcCell<T> {
+/*unsafe impl<T: Trace + 'static> Trace for GcCell<T> {
     fn trace(&self, tracer: &mut Tracer) {
         if tracer.mark(*self.ptr.borrow()) {
             self.deref().trace(tracer);
         }
     }
-}
+}*/
 
 unsafe impl<T: Trace + 'static> Trace for Option<T> {
     fn trace(&self, tracer: &mut Tracer) {

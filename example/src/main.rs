@@ -1,6 +1,6 @@
 use gc::*;
 use std::mem::size_of;
-use std::cell::{Cell, RefCell};
+use gc::unsafe_into::UnsafeInto;
 
 #[derive(GcNew, Trace)]
 struct SelfRef {
@@ -8,11 +8,27 @@ struct SelfRef {
     other: Option<GcPtr<SelfRef>>,
 }
 
+// TODO implement as proc macro
+impl SelfRef {
+    fn set_x(this: GcBor<Self>, x: i32) {
+        unsafe {
+            (*this.as_mut()).x = x.unsafe_into();
+        }
+    }
+
+    fn set_other(this: GcBor<Self>, other: Option<GcBor<SelfRef>>) {
+        unsafe {
+            (*this.as_mut()).other = other.unsafe_into();
+        }
+    }
+}
+
 fn main() {
     dbg!(size_of::<SelfRef>());
     dbg!(size_of::<GcPtr<SelfRef>>());
-    dbg!(size_of::<GcCell<SelfRef>>());
+    dbg!(size_of::<Option<GcPtr<SelfRef>>>());
     dbg!(size_of::<GcBor<SelfRef>>());
+    dbg!(size_of::<Option<GcBor<SelfRef>>>());
     dbg!(size_of::<GcRoot<SelfRef>>());
 
     let gc = Gc::new();
@@ -23,7 +39,8 @@ fn main() {
     let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, None);
     let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Some(a));
 
-    // TODO allow setting a.foo to Some(b)
+    SelfRef::set_x(a, 5);
+    SelfRef::set_other(a, Some(b));
 
     let a_root = gc.root(a);
 
@@ -34,8 +51,8 @@ fn main() {
 
     let new_ctx = gc.context();
     let a = a_root.borrow(&new_ctx);
-    dbg!(a.x);
-    //dbg!(a.other.borrow().unwrap().x);
+    assert_eq!(a.x, 5);
+    assert_eq!(a.other.as_ref().unwrap().x, 2);
 
     drop(a_root);
 
