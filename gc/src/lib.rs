@@ -5,6 +5,7 @@ use std::cell::{RefCell, RefMut};
 pub use gc_derive::*;
 use std::fmt::{Debug, Formatter};
 use std::collections::{HashMap, HashSet};
+use std::ptr::NonNull;
 use crate::unsafe_into::UnsafeInto;
 
 pub mod unsafe_into;
@@ -12,10 +13,13 @@ pub mod unsafe_into;
 // === GcPtr ===
 
 pub struct GcPtr<T> {
-    ptr: *const T,
+    ptr: NonNull<T>,
 }
 
 impl<T> GcPtr<T> {
+    /// # Safety
+    ///
+    /// Returned GcPtr must be immediately moved into another Gc managed object in the same GcContext as Bor
     pub unsafe fn from_bor(bor: GcBor<T>) -> GcPtr<T> {
         GcPtr { ptr: bor.ptr }
     }
@@ -32,7 +36,7 @@ impl<T> Deref for GcPtr<T> {
 
     fn deref(&self) -> &Self::Target {
         // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -96,18 +100,18 @@ impl<T> UnsafeInto<Option<GcCell<T>>> for Option<GcBor<'_, '_, T>> {
 // === GcBor ===
 
 pub struct GcBor<'ctx, 'gc, T> {
-    ptr: *const T,
+    ptr: NonNull<T>,
     // ctx: &'ctx GcContext<'gc>,
     phantom: PhantomData<&'ctx GcContext<'gc>>,
 }
 
 impl<'ctx, 'gc, T> GcBor<'ctx, 'gc, T> {
-    fn new(ptr: *const T, _ctx: &'ctx GcContext<'gc>) -> GcBor<'ctx, 'gc, T> {
+    fn new(ptr: NonNull<T>, _ctx: &'ctx GcContext<'gc>) -> GcBor<'ctx, 'gc, T> {
         GcBor { ptr, phantom: PhantomData::default() }
     }
 
-    pub unsafe fn as_mut(self) -> *mut T {
-        self.ptr as *mut T
+    pub fn as_ptr(self) -> *mut T {
+        self.ptr.as_ptr()
     }
 }
 
@@ -122,7 +126,7 @@ impl<'ctx, 'gc, T> Deref for GcBor<'ctx, 'gc, T> {
 
     fn deref(&self) -> &Self::Target {
         // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -137,14 +141,14 @@ impl<'ctx, 'gc, T> Copy for GcBor<'ctx, 'gc, T> {}
 // === GcRoot ===
 
 pub struct GcRoot<'gc, T: Trace + 'static> {
-    ptr: *const T,
+    ptr: NonNull<T>,
     gc: &'gc Gc,
 }
 
 impl<'gc, T: Trace> GcRoot<'gc, T> {
     pub fn borrow<'ctx>(&self, ctx: &'ctx GcContext<'gc>) -> GcBor<'ctx, 'gc, T> {
         // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
-        GcBor::new(unsafe { &*self.ptr }, ctx)
+        GcBor::new(self.ptr, ctx)
     }
 }
 
@@ -156,10 +160,11 @@ impl<T: Trace + 'static> Drop for GcRoot<'_, T> {
 
 // === Gc & GcContext ===
 
+#[derive(Default)]
 pub struct Gc {
     context_ref: RefCell<()>,
-    objs: RefCell<HashMap<*mut dyn Trace, bool>>,
-    roots: RefCell<HashSet<*mut dyn Trace>>,
+    objs: RefCell<HashMap<NonNull<dyn Trace>, bool>>,
+    roots: RefCell<HashSet<NonNull<dyn Trace>>>,
 }
 
 pub struct GcContext<'gc> {
@@ -172,17 +177,13 @@ pub struct GcContextError;
 
 impl Gc {
     pub fn new() -> Gc {
-        Gc {
-            context_ref: RefCell::default(),
-            objs: RefCell::default(),
-            roots: RefCell::default(),
-        }
+        Gc::default()
     }
 
     pub fn stats(&self) {
         eprintln!("objs: {}", self.objs.borrow().len());
         eprintln!("roots: {}", self.roots.borrow().len());
-        eprintln!("size: {}", self.objs.borrow().iter().map(|(ptr, _)| unsafe { std::mem::size_of_val(&**ptr) }).sum::<usize>());
+        eprintln!("size: {}", self.objs.borrow().iter().map(|(ptr, _)| unsafe { std::mem::size_of_val(ptr.as_ref()) }).sum::<usize>());
     }
 
     pub fn try_context(&self) -> Result<GcContext, GcContextError> {
@@ -197,17 +198,17 @@ impl Gc {
     }
 
     pub fn root<'gc, T: Trace + 'static>(&'gc self, bor: GcBor<T>) -> GcRoot<'gc, T> {
-        let ptr: *mut dyn Trace = bor.ptr as *mut T;
+        let ptr: NonNull<dyn Trace> = bor.ptr;
         self.roots.borrow_mut().insert(ptr);
         GcRoot { ptr: bor.ptr, gc: self } // TODO store for tracing later
     }
 
-    fn unroot<T: Trace + 'static>(&self, ptr: *const T) {
-        let ptr: *mut dyn Trace = ptr as *mut T;
+    fn unroot<T: Trace + 'static>(&self, ptr: NonNull<T>) {
+        let ptr: NonNull<dyn Trace> = ptr;
         self.roots.borrow_mut().remove(&ptr);
     }
 
-    fn allocate<T: Trace + 'static>(&self, ptr: *mut T) -> *const T {
+    fn allocate<T: Trace + 'static>(&self, ptr: NonNull<T>) -> NonNull<T> {
         self.objs.borrow_mut().insert(ptr, false);
         ptr
     }
@@ -220,7 +221,7 @@ impl Gc {
             }
             let mut tracer = Tracer { objs: &mut objs };
             for ptr in self.roots.borrow().iter() {
-                (&mut **ptr).trace(&mut tracer)
+                ptr.as_ref().trace(&mut tracer)
             }
 
             objs.retain(|ptr, marked| {
@@ -228,7 +229,7 @@ impl Gc {
                     *marked = false;
                     true
                 } else {
-                    drop(Box::from_raw(*ptr));
+                    drop(Box::from_raw(ptr.as_ptr()));
                     false
                 }
             });
@@ -238,7 +239,9 @@ impl Gc {
 
 impl<'gc> GcContext<'gc> {
     pub fn allocate<'ctx, T: Trace + 'static>(&'ctx self, t: T) -> GcBor<'ctx, 'gc, T> {
-        GcBor::new(self.gc.allocate(Box::into_raw(Box::new(t))), self)
+        // Safety: Box::into_raw(Box::new(...)) is guaranteed to return an init non-null pointer
+        let ptr = unsafe { self.gc.allocate(NonNull::new_unchecked(Box::into_raw(Box::new(t)))) };
+        GcBor::new(self.gc.allocate(ptr), self)
     }
 
     pub fn collect(self) {
@@ -289,13 +292,13 @@ noop_trace!(i32);
 noop_trace!(i64);
 
 pub struct Tracer<'a> {
-    objs: &'a mut HashMap<*mut dyn Trace, bool>
+    objs: &'a mut HashMap<NonNull<dyn Trace>, bool>
 }
 
 impl Tracer<'_> {
     // returns true if ptr has not been seen and tracing should continue
-    fn mark<T: Trace + 'static>(&mut self, ptr: *const T) -> bool {
-        let ptr: *mut dyn Trace = ptr as *mut T;
+    fn mark<T: Trace + 'static>(&mut self, ptr: NonNull<T>) -> bool {
+        let ptr: NonNull<dyn Trace> = ptr;
         !self.objs.insert(ptr, true).unwrap()
     }
 }

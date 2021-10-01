@@ -1,4 +1,5 @@
 pub trait UnsafeInto<T> {
+    #[allow(clippy::missing_safety_doc)]
     unsafe fn unsafe_into(self) -> T;
 }
 

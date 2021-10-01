@@ -12,13 +12,13 @@ struct SelfRef {
 impl SelfRef {
     fn set_x(this: GcBor<Self>, x: i32) {
         unsafe {
-            (*this.as_mut()).x = x.unsafe_into();
+            (*this.as_ptr()).x = x.unsafe_into();
         }
     }
 
     fn set_other(this: GcBor<Self>, other: Option<GcBor<SelfRef>>) {
         unsafe {
-            (*this.as_mut()).other = other.unsafe_into();
+            (*this.as_ptr()).other = other.unsafe_into();
         }
     }
 }
