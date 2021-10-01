@@ -1,4 +1,4 @@
-use gc::*;
+use gc::{Gc, GcBor, GcContext, GcNew, GcPtr, GcRoot, Trace};
 use std::mem::size_of;
 
 #[derive(GcNew, Trace)]

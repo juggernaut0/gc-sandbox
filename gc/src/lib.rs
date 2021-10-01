@@ -19,7 +19,8 @@ pub struct GcPtr<T> {
 impl<T> GcPtr<T> {
     /// # Safety
     ///
-    /// Returned GcPtr must be immediately moved into another Gc managed object in the same GcContext as bor
+    /// Returned `GcPtr` must be immediately moved into another Gc managed object in the same `GcContext` as bor
+    #[must_use]
     pub unsafe fn from_bor(bor: GcBor<T>) -> GcPtr<T> {
         GcPtr { ptr: bor.ptr }
     }
@@ -27,7 +28,7 @@ impl<T> GcPtr<T> {
 
 impl<T: Debug> Debug for GcPtr<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.deref())
+        write!(f, "{:?}", &**self)
     }
 }
 
@@ -65,6 +66,7 @@ impl<'ctx, 'gc, T> GcBor<'ctx, 'gc, T> {
         GcBor { ptr, phantom: PhantomData::default() }
     }
 
+    #[must_use]
     pub fn as_ptr(self) -> *mut T {
         self.ptr.as_ptr()
     }
@@ -72,7 +74,7 @@ impl<'ctx, 'gc, T> GcBor<'ctx, 'gc, T> {
 
 impl<T: Debug> Debug for GcBor<'_, '_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.deref())
+        write!(f, "{:?}", &**self)
     }
 }
 
@@ -101,6 +103,7 @@ pub struct GcRoot<'gc, T: Trace + 'static> {
 }
 
 impl<'gc, T: Trace> GcRoot<'gc, T> {
+    #[must_use]
     pub fn borrow<'ctx>(&self, ctx: &'ctx GcContext<'gc>) -> GcBor<'ctx, 'gc, T> {
         // safety: self.ptr cannot be constructed by user code and is guaranteed by module to be init and valid
         GcBor::new(self.ptr, ctx)
@@ -109,7 +112,7 @@ impl<'gc, T: Trace> GcRoot<'gc, T> {
 
 impl<T: Trace + 'static> Drop for GcRoot<'_, T> {
     fn drop(&mut self) {
-        self.gc.unroot(self.ptr)
+        self.gc.unroot(self.ptr);
     }
 }
 
@@ -131,6 +134,7 @@ pub struct GcContext<'gc> {
 pub struct GcContextError;
 
 impl Gc {
+    #[must_use]
     pub fn new() -> Gc {
         Gc::default()
     }
@@ -141,6 +145,9 @@ impl Gc {
         eprintln!("size: {}", self.objs.borrow().iter().map(|(ptr, _)| unsafe { std::mem::size_of_val(ptr.as_ref()) }).sum::<usize>());
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if a `GcContext` could not be created due to another context existing.
     pub fn try_context(&self) -> Result<GcContext, GcContextError> {
         match self.context_ref.try_borrow_mut() {
             Ok(r) => Ok(GcContext { _r: r, gc: self }),
@@ -176,7 +183,7 @@ impl Gc {
             }
             let mut tracer = Tracer { objs: &mut objs };
             for ptr in self.roots.borrow().iter() {
-                ptr.as_ref().trace(&mut tracer)
+                ptr.as_ref().trace(&mut tracer);
             }
 
             objs.retain(|ptr, marked| {
@@ -200,7 +207,7 @@ impl<'gc> GcContext<'gc> {
     }
 
     pub fn collect(self) {
-        self.gc.collect()
+        self.gc.collect();
     }
 }
 
