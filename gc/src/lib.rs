@@ -70,6 +70,17 @@ impl<'ctx, 'gc, T> GcBor<'ctx, 'gc, T> {
     pub fn as_ptr(self) -> *mut T {
         self.ptr.as_ptr()
     }
+
+    /// # Safety
+    ///
+    /// Two conditions must hold while using this mutable reference:
+    /// 1. You must obey Rust's XOR aliasing rules: This GcBor or any GcBor or GcPtr pointing to the same object must
+    /// not be dereferenced mutably or immutably while this reference is active.
+    /// 2. This mutable reference must not be used to reference or create references to Gc managed data past the
+    /// lifetimes of this GcBor (lifetime parameters 'ctx and 'gc).
+    pub unsafe fn as_mut(self) -> &'ctx mut T {
+        &mut *self.as_ptr()
+    }
 }
 
 impl<T: Debug> Debug for GcBor<'_, '_, T> {

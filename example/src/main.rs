@@ -1,24 +1,19 @@
-use gc::{Gc, GcBor, GcContext, GcNew, GcPtr, GcRoot, Trace};
+use gc::{Gc, GcBor, GcContext, GcPtr, GcRoot, Trace};
 use std::mem::size_of;
 
-#[derive(GcNew, Trace)]
+#[derive(Trace)]
 struct SelfRef {
     x: i32,
     other: Option<GcPtr<SelfRef>>,
 }
 
-// TODO implement as proc macro
 impl SelfRef {
-    fn set_x(this: GcBor<Self>, x: impl gc::unsafe_into::UnsafeInto<i32>) {
-        unsafe {
-            (*this.as_ptr()).x = x.unsafe_into();
-        }
-    }
-
-    fn set_other(this: GcBor<Self>, other: impl gc::unsafe_into::UnsafeInto<Option<GcPtr<SelfRef>>>) {
-        unsafe {
-            (*this.as_ptr()).other = other.unsafe_into();
-        }
+    fn new<'ctx, 'gc>(ctx: &'ctx GcContext<'gc>, x: i32, other: Option<GcBor<SelfRef>>) -> GcBor<'ctx, 'gc, SelfRef> {
+        //allocate!(ctx, SelfRef { x: x, other: other }, other)
+        ctx.allocate(unsafe {
+            use gc::unsafe_into::UnsafeInto;
+            SelfRef { x: x, other: other.unsafe_into() }
+        })
     }
 }
 
@@ -35,12 +30,14 @@ fn main() {
 
     let ctx: GcContext = gc.context();
 
-    let opt: Option<GcBor<SelfRef>> = None;
-    let a: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 1, opt);
-    let b: GcBor<SelfRef> = SelfRef::gc_new(&ctx, 2, Some(a));
+    let a = SelfRef::new(&ctx, 1, None);
+    let b = SelfRef::new(&ctx, 2, Some(a));
 
-    SelfRef::set_x(a, 5);
-    SelfRef::set_other(a, Some(b));
+    unsafe {
+        let mut_a = a.as_mut(); // safety: there are no other references to the data in a
+        mut_a.x = 5;
+        mut_a.other = Some(GcPtr::from_bor(b)); // safety: The GcPtr will be solely owned by Gc managed data
+    }
 
     let a_root = gc.root(a);
 
